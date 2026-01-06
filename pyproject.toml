@@ -7,7 +7,7 @@ name = "pyllm-inference"
 version = "1.0.0"
 description = "PyLLM: LLM Inference with Streaming Chat and OpenAI-compatible API"
 readme = "README.md"
-license = "MIT"
+license = {text = "MIT"}
 requires-python = ">=3.8"
 authors = [
     {name = "nano3"}
@@ -20,7 +20,6 @@ classifiers = [
     "Framework :: FastAPI",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
