@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyllm-inference"
+version = "1.0.0"
+description = "PyLLM: LLM Inference with Streaming Chat and OpenAI-compatible API"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.8"
+authors = [
+    {name = "nano3"}
+]
+keywords = ["llm", "inference", "streaming", "chat", "openai", "transformers"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+    "safetensors>=0.3.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+ui = [
+    "streamlit>=1.28.0",
+    "streamlit-shadcn-ui>=0.1.0",
+    "requests>=2.31.0",
+]
+inl = [
+    "inl-llm>=3.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+]
+
+[project.scripts]
+pyllm = "pyllm.cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/Web3-League/pyllm"
+Documentation = "https://github.com/Web3-League/pyllm#readme"
+Repository = "https://github.com/Web3-League/pyllm"
+Issues = "https://github.com/Web3-League/pyllm/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pyllm*"]
+
+[tool.setuptools.package-data]
+pyllm = ["ui/*.py", "ui/**/*.py"]
