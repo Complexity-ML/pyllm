@@ -192,25 +192,7 @@ class InferenceEngine:
 
             model_loaded = False
 
-            # Use legacy model for v2 checkpoints
-            if is_v2_legacy:
-                try:
-                    from pyllm.inference.inl_legacy import IntegratorLanguageModelLegacy
-                    self.model = IntegratorLanguageModelLegacy(
-                        vocab_size=vocab_size,
-                        d_model=d_model,
-                        num_layers=num_layers,
-                        num_heads=num_heads,
-                        num_iterations_per_layer=num_iterations,
-                        feedforward_dim=feedforward_dim,
-                        max_seq_len=self.config.max_seq_len
-                    )
-                    model_loaded = True
-                    logger.info("Using INL-LLM v2 legacy architecture (built-in)")
-                except Exception as e:
-                    logger.warning(f"Failed to load legacy model: {e}")
-
-            # Try INL-LLM v3 for v3 checkpoints
+            # Try INL-LLM v3 first
             if not model_loaded:
                 try:
                     from inl_llm_v3.models.integrator_language_model import UltraOptimizedIntegratorLanguageModel
@@ -229,10 +211,11 @@ class InferenceEngine:
                 except ImportError:
                     pass
 
+            # Try INL-LLM v2 (from pip install -e llm-dynamics)
             if not model_loaded:
                 try:
-                    from inl_llm import IntegratorLanguageModel
-                    self.model = IntegratorLanguageModel(
+                    from inl_llm import UltraOptimizedIntegratorLanguageModel
+                    self.model = UltraOptimizedIntegratorLanguageModel(
                         vocab_size=vocab_size,
                         d_model=d_model,
                         num_layers=num_layers,
@@ -242,7 +225,7 @@ class InferenceEngine:
                         max_seq_len=self.config.max_seq_len
                     )
                     model_loaded = True
-                    logger.info("Using INL-LLM architecture (from pip)")
+                    logger.info("Using INL-LLM v2 architecture (from pip)")
                 except ImportError:
                     pass
 
@@ -250,17 +233,8 @@ class InferenceEngine:
                 logger.error("No INL-LLM module found. Install with: pip install inl-llm")
                 return False
 
-            # Load weights (state_dict already loaded above for architecture detection)
-            # Use strict=False for v2 legacy models to ignore INL-specific weights
-            # that aren't needed for inference (inl.controller, shared_controller, etc.)
-            if is_v2_legacy:
-                missing, unexpected = self.model.load_state_dict(state_dict, strict=False)
-                if missing:
-                    logger.debug(f"Missing keys (expected for legacy): {len(missing)} keys")
-                if unexpected:
-                    logger.debug(f"Unexpected keys (INL weights ignored): {len(unexpected)} keys")
-            else:
-                self.model.load_state_dict(state_dict)
+            # Load weights
+            self.model.load_state_dict(state_dict)
             self.model.to(self.device)
             self.model.eval()
 
