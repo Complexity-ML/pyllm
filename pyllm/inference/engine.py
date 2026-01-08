@@ -27,6 +27,11 @@ class GenerationConfig:
     max_new_tokens: int = 256
     do_sample: bool = True
     stream: bool = True
+    # Anti-repetition settings
+    no_repeat_ngram_size: int = 3  # Prevent repeating n-grams of this size
+    repetition_window: int = 64  # Window to check for repetitions
+    early_stop_on_loop: bool = True  # Stop if loop detected
+    loop_threshold: int = 3  # Number of repeated sequences before stopping
 
 
 class INLTokenizerWrapper:
@@ -151,34 +156,78 @@ class InferenceEngine:
                 num_iterations = inl_cfg.get("num_iterations_per_layer", 2)
             else:
                 vocab_size = model_config.get("vocab_size", 100000)
-                d_model = model_config.get("hidden_size", 768)
-                num_layers = model_config.get("num_hidden_layers", 12)
-                num_heads = model_config.get("num_attention_heads", 12)
-                num_kv_heads = model_config.get("num_key_value_heads", 4)
-                feedforward_dim = model_config.get("intermediate_size", 3072)
+                # Support both INL style (d_model) and HuggingFace style (hidden_size)
+                d_model = model_config.get("d_model", model_config.get("hidden_size", 768))
+                num_layers = model_config.get("num_layers", model_config.get("num_hidden_layers", 12))
+                num_heads = model_config.get("num_heads", model_config.get("num_attention_heads", 12))
+                num_kv_heads = model_config.get("num_kv_heads", model_config.get("num_key_value_heads", 4))
+                feedforward_dim = model_config.get("feedforward_dim", model_config.get("intermediate_size", 3072))
                 num_iterations = model_config.get("num_iterations_per_layer", 2)
 
             logger.info(f"Model config: vocab={vocab_size}, d_model={d_model}, layers={num_layers}, heads={num_heads}")
 
-            # Try INL-LLM v3 first, then v2
+            # Detect model type from config
+            model_type = model_config.get("model_type", "")
+            is_v2_legacy = "v2" in model_type.lower() or model_type == "inl-llm-v2"
+
+            # Load weights first to detect architecture
+            if str(weights_path).endswith(".safetensors"):
+                from safetensors.torch import load_file
+                state_dict = load_file(str(weights_path))
+            else:
+                checkpoint = torch.load(str(weights_path), map_location="cpu", weights_only=False)
+                if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+                    state_dict = checkpoint["model_state_dict"]
+                else:
+                    state_dict = checkpoint
+
+            # Detect v2 architecture from state dict keys
+            has_qkv_proj = any("qkv_proj" in k for k in state_dict.keys())
+            has_ff_indexed = any("ff.0." in k for k in state_dict.keys())
+            has_pos_encoding = any("pos_encoding.pe" in k for k in state_dict.keys())
+
+            if has_qkv_proj and has_ff_indexed:
+                is_v2_legacy = True
+                logger.info("Detected v2 legacy architecture from state dict keys")
+
             model_loaded = False
 
-            try:
-                from inl_llm_v3.models.integrator_language_model import UltraOptimizedIntegratorLanguageModel
-                self.model = UltraOptimizedIntegratorLanguageModel(
-                    vocab_size=vocab_size,
-                    d_model=d_model,
-                    num_layers=num_layers,
-                    num_heads=num_heads,
-                    num_kv_heads=num_kv_heads,
-                    feedforward_dim=feedforward_dim,
-                    num_iterations_per_layer=num_iterations,
-                    max_seq_len=self.config.max_seq_len
-                )
-                model_loaded = True
-                logger.info("Using INL-LLM v3 architecture")
-            except ImportError:
-                pass
+            # Use legacy model for v2 checkpoints
+            if is_v2_legacy:
+                try:
+                    from pyllm.inference.inl_legacy import IntegratorLanguageModelLegacy
+                    self.model = IntegratorLanguageModelLegacy(
+                        vocab_size=vocab_size,
+                        d_model=d_model,
+                        num_layers=num_layers,
+                        num_heads=num_heads,
+                        num_iterations_per_layer=num_iterations,
+                        feedforward_dim=feedforward_dim,
+                        max_seq_len=self.config.max_seq_len
+                    )
+                    model_loaded = True
+                    logger.info("Using INL-LLM v2 legacy architecture (built-in)")
+                except Exception as e:
+                    logger.warning(f"Failed to load legacy model: {e}")
+
+            # Try INL-LLM v3 for v3 checkpoints
+            if not model_loaded:
+                try:
+                    from inl_llm_v3.models.integrator_language_model import UltraOptimizedIntegratorLanguageModel
+                    self.model = UltraOptimizedIntegratorLanguageModel(
+                        vocab_size=vocab_size,
+                        d_model=d_model,
+                        num_layers=num_layers,
+                        num_heads=num_heads,
+                        num_kv_heads=num_kv_heads,
+                        feedforward_dim=feedforward_dim,
+                        num_iterations_per_layer=num_iterations,
+                        max_seq_len=self.config.max_seq_len
+                    )
+                    model_loaded = True
+                    logger.info("Using INL-LLM v3 architecture")
+                except ImportError:
+                    pass
 
             if not model_loaded:
                 try:
@@ -193,26 +242,25 @@ class InferenceEngine:
                         max_seq_len=self.config.max_seq_len
                     )
                     model_loaded = True
-                    logger.info("Using INL-LLM v2 architecture")
+                    logger.info("Using INL-LLM architecture (from pip)")
                 except ImportError:
                     pass
 
             if not model_loaded:
-                logger.error("No INL-LLM module found. Install with: pip install inl-llm-v3")
+                logger.error("No INL-LLM module found. Install with: pip install inl-llm")
                 return False
 
-            # Load weights
-            if str(weights_path).endswith(".safetensors"):
-                from safetensors.torch import load_file
-                state_dict = load_file(str(weights_path))
+            # Load weights (state_dict already loaded above for architecture detection)
+            # Use strict=False for v2 legacy models to ignore INL-specific weights
+            # that aren't needed for inference (inl.controller, shared_controller, etc.)
+            if is_v2_legacy:
+                missing, unexpected = self.model.load_state_dict(state_dict, strict=False)
+                if missing:
+                    logger.debug(f"Missing keys (expected for legacy): {len(missing)} keys")
+                if unexpected:
+                    logger.debug(f"Unexpected keys (INL weights ignored): {len(unexpected)} keys")
             else:
-                checkpoint = torch.load(str(weights_path), map_location="cpu", weights_only=False)
-                if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
-                    state_dict = checkpoint["model_state_dict"]
-                else:
-                    state_dict = checkpoint
-
-            self.model.load_state_dict(state_dict)
+                self.model.load_state_dict(state_dict)
             self.model.to(self.device)
             self.model.eval()
 
@@ -292,16 +340,39 @@ class InferenceEngine:
             for token in self._generate_tokens(input_ids, config):
                 yield token
 
+    def _get_ngrams(self, token_ids: List[int], n: int) -> set:
+        """Extract all n-grams from a list of token ids."""
+        ngrams = set()
+        for i in range(len(token_ids) - n + 1):
+            ngram = tuple(token_ids[i:i + n])
+            ngrams.add(ngram)
+        return ngrams
+
+    def _detect_loop(self, token_ids: List[int], min_pattern: int = 4, max_pattern: int = 20) -> bool:
+        """Detect if the last tokens form a repeating loop."""
+        if len(token_ids) < min_pattern * 2:
+            return False
+
+        # Check for patterns of different sizes
+        for pattern_len in range(min_pattern, min(max_pattern, len(token_ids) // 2) + 1):
+            pattern = token_ids[-pattern_len:]
+            prev_pattern = token_ids[-pattern_len * 2:-pattern_len]
+            if pattern == prev_pattern:
+                return True
+        return False
+
     def _generate_tokens(
         self,
         input_ids: torch.Tensor,
         config: GenerationConfig,
     ) -> Generator[str, None, None]:
-        """Generate tokens one at a time."""
+        """Generate tokens one at a time with advanced anti-repetition."""
         generated = input_ids.clone()
-        past_tokens = set(input_ids[0].tolist())
+        generated_list = input_ids[0].tolist()
+        past_tokens = set(generated_list)
+        loop_count = 0
 
-        for _ in range(config.max_new_tokens):
+        for step in range(config.max_new_tokens):
             # Forward pass
             with torch.no_grad():
                 outputs = self.model(generated)
@@ -315,13 +386,34 @@ class InferenceEngine:
                 else:
                     logits = outputs[:, -1, :]
 
-            # Apply repetition penalty
+            # Apply repetition penalty to past tokens
             if config.repetition_penalty != 1.0:
-                for token_id in past_tokens:
+                # Use window for recent tokens (stronger penalty)
+                window_start = max(0, len(generated_list) - config.repetition_window)
+                recent_tokens = set(generated_list[window_start:])
+
+                for token_id in recent_tokens:
                     if logits[0, token_id] < 0:
                         logits[0, token_id] *= config.repetition_penalty
                     else:
                         logits[0, token_id] /= config.repetition_penalty
+
+            # Ban n-grams that would create repetition
+            if config.no_repeat_ngram_size > 0 and len(generated_list) >= config.no_repeat_ngram_size:
+                # Get recent context for n-gram checking
+                window_start = max(0, len(generated_list) - config.repetition_window)
+                context = generated_list[window_start:]
+
+                # Get existing n-grams in context
+                existing_ngrams = self._get_ngrams(context, config.no_repeat_ngram_size)
+
+                # Check what n-gram would be formed with each possible next token
+                prefix = tuple(context[-(config.no_repeat_ngram_size - 1):])
+                for ngram in existing_ngrams:
+                    if ngram[:-1] == prefix:
+                        # This token would create a repeated n-gram
+                        banned_token = ngram[-1]
+                        logits[0, banned_token] = float('-inf')
 
             # Apply temperature
             if config.temperature > 0:
@@ -353,21 +445,35 @@ class InferenceEngine:
             else:
                 next_token = torch.argmax(logits, dim=-1, keepdim=True)
 
+            next_token_id = next_token.item()
+
             # Check for EOS
-            if next_token.item() == self.tokenizer.eos_token_id:
+            if next_token_id == self.tokenizer.eos_token_id:
                 break
+
+            # Update state
+            generated = torch.cat([generated, next_token], dim=-1)
+            generated_list.append(next_token_id)
+            past_tokens.add(next_token_id)
+
+            # Check for loops (early stopping)
+            if config.early_stop_on_loop and len(generated_list) > 20:
+                if self._detect_loop(generated_list):
+                    loop_count += 1
+                    if loop_count >= config.loop_threshold:
+                        logger.warning(f"Loop detected at step {step}, stopping generation")
+                        break
+                else:
+                    loop_count = 0
 
             # Decode and yield
             token_text = self.tokenizer.decode(next_token[0], skip_special_tokens=True)
             yield token_text
 
-            # Update state
-            generated = torch.cat([generated, next_token], dim=-1)
-            past_tokens.add(next_token.item())
-
             # Truncate if needed
             if generated.shape[1] > self.config.max_seq_len:
                 generated = generated[:, -self.config.max_seq_len:]
+                generated_list = generated_list[-self.config.max_seq_len:]
 
     def chat(
         self,
