@@ -554,19 +554,21 @@ class InferenceEngine:
         yield from self.generate(prompt, config)
 
     def _format_chat(self, messages: List[Message]) -> str:
-        """Format chat messages into a prompt."""
-        lines = []
+        """
+        Format chat messages into a prompt.
 
+        For base models (not instruction-tuned), we use completion mode:
+        concatenate all messages as plain text without special formatting.
+        The model continues the text naturally (code or text).
+        """
+        # Completion mode: concatenate all messages as plain text
+        # No "User:" or "Assistant:" prefixes - just natural text continuation
+        parts = []
         for msg in messages:
-            if msg.role == "system":
-                lines.append(f"System: {msg.content}")
-            elif msg.role == "user":
-                lines.append(f"User: {msg.content}")
-            elif msg.role == "assistant":
-                lines.append(f"Assistant: {msg.content}")
+            if msg.content.strip():
+                parts.append(msg.content)
 
-        lines.append("Assistant:")
-        return "\n".join(lines)
+        return "\n\n".join(parts)
 
     def complete(
         self,
