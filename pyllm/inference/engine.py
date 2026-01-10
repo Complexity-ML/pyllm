@@ -86,43 +86,19 @@ class InferenceEngine:
         """
         Detect the best available device.
 
-        Uses tpu-inl for auto-detection when available.
-        Supports: CUDA, DirectML, MPS, Intel XPU, CPU
+        Supports: CUDA, CPU only.
+        DirectML/MPS/XPU removed - they degrade inference quality.
         """
         device_config = self.config.device
 
-        # Try tpu-inl for auto-detection
+        # Auto-detection: CUDA if available, otherwise CPU
         if device_config == "auto":
-            try:
-                from tpu_inl import get_backend, Backend
-                self._backend = get_backend()
-
-                if self._backend == Backend.CUDA:
-                    logger.info("tpu-inl detected: CUDA")
-                    return torch.device("cuda")
-                elif self._backend == Backend.AMD:
-                    logger.info("tpu-inl detected: AMD ROCm")
-                    return torch.device("cuda")  # ROCm uses cuda device
-                elif self._backend == Backend.DIRECTML:
-                    logger.info("tpu-inl detected: DirectML")
-                    try:
-                        import torch_directml
-                        return torch_directml.device()
-                    except ImportError:
-                        logger.warning("DirectML detected but torch-directml not installed")
-                elif self._backend == Backend.INTEL:
-                    logger.info("tpu-inl detected: Intel XPU")
-                    if hasattr(torch, 'xpu') and torch.xpu.is_available():
-                        return torch.device("xpu")
-                elif self._backend == Backend.TPU:
-                    logger.info("tpu-inl detected: TPU (using CPU fallback for PyTorch)")
-                    # TPU requires JAX, fallback to CPU for PyTorch models
-
-                logger.info("tpu-inl detected: CPU fallback")
+            if torch.cuda.is_available():
+                logger.info("Using CUDA")
+                return torch.device("cuda")
+            else:
+                logger.info("Using CPU")
                 return torch.device("cpu")
-
-            except ImportError:
-                logger.debug("tpu-inl not available, using manual detection")
 
         # Manual device selection
         if device_config == "cuda":
@@ -131,23 +107,9 @@ class InferenceEngine:
             logger.warning("CUDA requested but not available, falling back to CPU")
             return torch.device("cpu")
 
-        elif device_config == "directml":
-            try:
-                import torch_directml
-                return torch_directml.device()
-            except ImportError:
-                logger.warning("DirectML requested but torch-directml not installed")
-                return torch.device("cpu")
-
-        elif device_config == "mps":
-            if torch.backends.mps.is_available():
-                return torch.device("mps")
-            logger.warning("MPS requested but not available, falling back to CPU")
-            return torch.device("cpu")
-
-        else:
-            # CPU or unknown
-            return torch.device("cpu")
+        # Default to CPU
+        logger.info("Using CPU")
+        return torch.device("cpu")
 
     def load(self, model_path: Optional[str] = None) -> None:
         """Load the model."""
