@@ -520,34 +520,37 @@ class InferenceEngine:
                         banned_token = ngram[-1]
                         logits[0, banned_token] = float('-inf')
 
-            # Apply temperature
-            if config.temperature > 0:
+            # Temperature = 0 means greedy decoding
+            use_greedy = config.temperature <= 0 or not config.do_sample
+
+            if not use_greedy:
+                # Apply temperature
                 logits = logits / config.temperature
 
-            # Apply top-k
-            if config.top_k > 0:
-                indices_to_remove = logits < torch.topk(logits, config.top_k)[0][..., -1, None]
-                logits[indices_to_remove] = float('-inf')
+                # Apply top-k
+                if config.top_k > 0:
+                    indices_to_remove = logits < torch.topk(logits, config.top_k)[0][..., -1, None]
+                    logits[indices_to_remove] = float('-inf')
 
-            # Apply top-p (nucleus sampling)
-            if config.top_p < 1.0:
-                sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-                cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+                # Apply top-p (nucleus sampling)
+                if config.top_p < 1.0:
+                    sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                    cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
 
-                sorted_indices_to_remove = cumulative_probs > config.top_p
-                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-                sorted_indices_to_remove[..., 0] = 0
+                    sorted_indices_to_remove = cumulative_probs > config.top_p
+                    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                    sorted_indices_to_remove[..., 0] = 0
 
-                indices_to_remove = sorted_indices_to_remove.scatter(
-                    dim=-1, index=sorted_indices, src=sorted_indices_to_remove
-                )
-                logits[indices_to_remove] = float('-inf')
+                    indices_to_remove = sorted_indices_to_remove.scatter(
+                        dim=-1, index=sorted_indices, src=sorted_indices_to_remove
+                    )
+                    logits[indices_to_remove] = float('-inf')
 
-            # Sample
-            if config.do_sample:
+                # Sample from distribution
                 probs = torch.softmax(logits, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1)
             else:
+                # Greedy decoding (temperature=0)
                 next_token = torch.argmax(logits, dim=-1, keepdim=True)
 
             next_token_id = next_token.item()
