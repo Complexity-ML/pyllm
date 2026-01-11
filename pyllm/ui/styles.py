@@ -419,30 +419,7 @@ def apply_styles():
         margin-top: 0.25rem;
     }
 
-    /* ===== Sidebar fixes ===== */
-    [data-testid="stSidebar"] {
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
-
-    [data-testid="stSidebar"] > div:first-child {
-        overflow-y: auto;
-        overflow-x: hidden;
-        height: 100vh;
-        padding-bottom: 2rem;
-    }
-
-    /* Hide scrollbar but keep functionality */
-    [data-testid="stSidebar"]::-webkit-scrollbar {
-        width: 4px;
-    }
-
-    [data-testid="stSidebar"]::-webkit-scrollbar-thumb {
-        background: var(--muted);
-        border-radius: 2px;
-    }
-
-    /* Adjust main content */
+    /* ===== Main content ===== */
     .main .block-container {
         padding-left: 1rem;
         padding-right: 1rem;
