@@ -248,7 +248,11 @@ async def stream_chat(
     try:
         chat_id = f"chatcmpl-{int(datetime.now().timestamp())}"
 
-        async for chunk in generator.chat(messages, config):
+        # Format messages as plain text prompt (just use the content, no formatting)
+        # For base models, just use the last user message as prompt
+        prompt = messages[-1].content if messages else ""
+
+        async for chunk in generator.generate(prompt, config):
             if chunk.finished:
                 # Final chunk
                 data = {
