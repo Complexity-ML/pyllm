@@ -261,6 +261,7 @@ class InferenceEngine:
                 logger.info(f"Detected ComplexityDeep architecture from state dict keys ({', '.join(features)})")
 
             model_loaded = False
+            weights_loaded = False  # Track if from_pretrained already loaded weights
 
             # Determine which architecture to use
             is_deep = (
@@ -272,22 +273,20 @@ class InferenceEngine:
             # Try Complexity Deep model (with INL Dynamics)
             if is_complexity and is_deep and not model_loaded:
                 try:
-                    from complexity_deep import DeepConfig, DeepForCausalLM
-                    import inspect
+                    from complexity_deep import DeepForCausalLM
 
-                    # Get valid params for DeepConfig
-                    valid_params = set(inspect.signature(DeepConfig.__init__).parameters.keys())
-                    valid_params.discard('self')
-
-                    # Filter model_config to only include valid params
-                    filtered_config = {k: v for k, v in model_config.items() if k in valid_params}
-
-                    config = DeepConfig(**filtered_config)
-                    self.model = DeepForCausalLM(config)
+                    # Use from_pretrained which handles config loading correctly
+                    self.model = DeepForCausalLM.from_pretrained(
+                        str(model_dir),
+                        device=str(self.device)
+                    )
                     model_loaded = True
-                    logger.info(f"Using ComplexityDeep architecture (all params from config.json)")
+                    weights_loaded = True  # from_pretrained already loaded weights
+                    logger.info(f"Using ComplexityDeep from_pretrained (correct config loading)")
                 except ImportError as e:
                     logger.debug(f"ComplexityDeep import failed: {e}")
+                except Exception as e:
+                    logger.debug(f"ComplexityDeep from_pretrained failed: {e}")
 
             # Try Complexity Model (basic, without INL Dynamics)
             if is_complexity and not model_loaded:
@@ -321,9 +320,10 @@ class InferenceEngine:
                 logger.error("No compatible model module found. Install with: pip install complexity or pip install complexity-deep")
                 return False
 
-            # Load weights
-            self.model.load_state_dict(state_dict)
-            self.model.to(self.device)
+            # Load weights (skip if from_pretrained already loaded them)
+            if not weights_loaded:
+                self.model.load_state_dict(state_dict)
+                self.model.to(self.device)
             self.model.eval()
 
             # Try to compile model for faster inference (PyTorch 2.0+)
