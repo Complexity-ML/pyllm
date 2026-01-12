@@ -44,6 +44,8 @@ class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     temperature: float = 0.7
     top_p: float = 0.9
+    top_k: int = 50
+    repetition_penalty: float = 1.2
     max_tokens: int = 256
     stream: bool = True
 
@@ -189,6 +191,8 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
             gen_config = GenerationConfig(
                 temperature=request.temperature,
                 top_p=request.top_p,
+                top_k=request.top_k,
+                repetition_penalty=request.repetition_penalty,
                 max_new_tokens=request.max_tokens,
             )
 
@@ -198,8 +202,8 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
                     media_type="text/event-stream",
                 )
             else:
-                # Non-streaming response
-                prompt = chat_template.format(messages)
+                # Non-streaming response - use engine's chat formatting (plain text for base models)
+                prompt = eng._format_chat(messages)
                 result = eng.complete(prompt, gen_config)
 
                 return ChatResponse(
