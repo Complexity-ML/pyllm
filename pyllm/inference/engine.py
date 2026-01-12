@@ -273,10 +273,16 @@ class InferenceEngine:
             if is_complexity and is_deep and not model_loaded:
                 try:
                     from complexity_deep import DeepConfig, DeepForCausalLM
+                    import inspect
 
-                    # Use from_dict to load ALL parameters from config.json
-                    # This ensures dynamics params, rms_norm_eps, rope_theta, etc. are all correct
-                    config = DeepConfig.from_dict(model_config)
+                    # Get valid params for DeepConfig
+                    valid_params = set(inspect.signature(DeepConfig.__init__).parameters.keys())
+                    valid_params.discard('self')
+
+                    # Filter model_config to only include valid params
+                    filtered_config = {k: v for k, v in model_config.items() if k in valid_params}
+
+                    config = DeepConfig(**filtered_config)
                     self.model = DeepForCausalLM(config)
                     model_loaded = True
                     logger.info(f"Using ComplexityDeep architecture (all params from config.json)")
