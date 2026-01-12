@@ -274,26 +274,12 @@ class InferenceEngine:
                 try:
                     from complexity_deep import DeepConfig, DeepForCausalLM
 
-                    # Get Complexity-specific config
-                    num_experts = model_config.get("num_experts", 4)
-                    use_qk_norm = model_config.get("use_qk_norm", True)
-                    use_token_routed_mlp = model_config.get("use_token_routed_mlp", True)
-
-                    config = DeepConfig(
-                        vocab_size=vocab_size,
-                        hidden_size=d_model,
-                        intermediate_size=feedforward_dim,
-                        num_hidden_layers=num_layers,
-                        num_attention_heads=num_heads,
-                        num_key_value_heads=num_kv_heads,
-                        max_position_embeddings=self.config.max_seq_len,
-                        use_token_routed_mlp=use_token_routed_mlp,
-                        num_experts=num_experts,
-                        use_qk_norm=use_qk_norm,
-                    )
+                    # Use from_dict to load ALL parameters from config.json
+                    # This ensures dynamics params, rms_norm_eps, rope_theta, etc. are all correct
+                    config = DeepConfig.from_dict(model_config)
                     self.model = DeepForCausalLM(config)
                     model_loaded = True
-                    logger.info("Using ComplexityDeep architecture (Token-Routed MLP + INL Dynamics)")
+                    logger.info(f"Using ComplexityDeep architecture (all params from config.json)")
                 except ImportError as e:
                     logger.debug(f"ComplexityDeep import failed: {e}")
 
