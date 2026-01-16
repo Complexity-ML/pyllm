@@ -194,7 +194,11 @@ class InferenceEngine:
         prompt: str,
         config: Optional[GenerationConfig] = None,
     ) -> Generator[str, None, None]:
-        """Generate text from prompt with streaming."""
+        """
+        Generate text from prompt with streaming.
+
+        Uses manual generation loop (same as generate.py) for consistent results.
+        """
         if not self._loaded:
             raise RuntimeError("Model not loaded. Call load() first.")
 
@@ -203,39 +207,61 @@ class InferenceEngine:
         # Tokenize
         inputs = self.tokenizer(prompt, return_tensors="pt")
         input_ids = inputs["input_ids"].to(self.device)
+        generated_ids = input_ids.clone()
+
+        # Track generated tokens for repetition penalty
+        generated_set = set(input_ids[0].tolist())
 
         logger.info(f"Generating with temp={config.temperature}, top_k={config.top_k}, top_p={config.top_p}")
-        if config.use_dynamics:
-            logger.info(f"INL Dynamics enabled: strength={config.dynamics_strength}, alpha={config.dynamics_alpha}, beta={config.dynamics_beta}")
 
-        # Use model's native generate
         with torch.no_grad():
-            # Build generate kwargs - only pass dynamics params if model supports them
-            generate_kwargs = {
-                "max_new_tokens": config.max_new_tokens,
-                "temperature": config.temperature if config.temperature > 0 else 1.0,
-                "top_k": config.top_k,
-                "top_p": config.top_p,
-                "do_sample": config.do_sample and config.temperature > 0,
-                "eos_token_id": self.tokenizer.eos_token_id,
-            }
+            for _ in range(config.max_new_tokens):
+                # Forward pass (same as generate.py - no KV cache)
+                outputs = self.model(generated_ids)
+                next_logits = outputs.logits[0, -1, :].float()
 
-            # Add full INL Dynamics params (PID with mu)
-            if config.use_dynamics:
-                generate_kwargs["use_dynamics"] = True
-                generate_kwargs["dynamics_strength"] = config.dynamics_strength
-                generate_kwargs["dynamics_alpha"] = config.dynamics_alpha
-                generate_kwargs["dynamics_beta"] = config.dynamics_beta
+                # Repetition penalty
+                if config.repetition_penalty != 1.0:
+                    for token_id in generated_set:
+                        next_logits[token_id] /= config.repetition_penalty
 
-            output_ids = self.model.generate(input_ids, **generate_kwargs)
+                # Temperature
+                if config.temperature > 0:
+                    next_logits = next_logits / config.temperature
 
-        # Yield new tokens only
-        new_tokens = output_ids[0, input_ids.shape[1]:]
-        for token_id in new_tokens:
-            if token_id.item() == self.tokenizer.eos_token_id:
-                break
-            token_text = self.tokenizer.decode([token_id.item()], skip_special_tokens=True)
-            yield token_text
+                # Top-k filtering
+                if config.top_k > 0:
+                    indices_to_remove = next_logits < torch.topk(next_logits, config.top_k)[0][..., -1, None]
+                    next_logits[indices_to_remove] = float("-inf")
+
+                # Top-p (nucleus) filtering
+                if config.top_p < 1.0:
+                    sorted_logits, sorted_indices = torch.sort(next_logits, descending=True)
+                    cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+
+                    # Remove tokens with cumulative probability above threshold
+                    sorted_indices_to_remove = cumulative_probs > config.top_p
+                    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                    sorted_indices_to_remove[..., 0] = 0
+
+                    indices_to_remove = sorted_indices[sorted_indices_to_remove]
+                    next_logits[indices_to_remove] = float("-inf")
+
+                # Sample
+                probs = torch.softmax(next_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+
+                # Append to sequence
+                generated_ids = torch.cat([generated_ids, next_token.unsqueeze(0)], dim=1)
+                generated_set.add(next_token.item())
+
+                # Stop at EOS
+                if next_token.item() == self.tokenizer.eos_token_id:
+                    break
+
+                # Yield token text
+                token_text = self.tokenizer.decode([next_token.item()], skip_special_tokens=True)
+                yield token_text
 
     def chat(
         self,
